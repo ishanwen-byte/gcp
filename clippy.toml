@@ -1,0 +1,20 @@
+# Clippy configuration
+allow-dirty-in-crate-examples = false
+allow-dirty-in-tests = false
+allow-unsafe-in-crate-examples = false
+allow-unsafe-in-tests = false
+
+# Lints we want to enable
+msrv = "1.75.0"  # Minimum supported Rust version
+
+# Cognitive complexity limit
+cognitive-complexity-threshold = 30
+
+# Enum variant size threshold
+enum-variant-size-threshold = 200
+
+# Function line count threshold
+too-many-arguments-threshold = 7
+
+# Type complexity threshold
+type-complexity-threshold = 250
