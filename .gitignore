@@ -10,9 +10,10 @@ Cargo.lock
 *.swo
 specs/
 .spec-workflow/
-.claude/
+.claude
 .serena/
 .specify/
+CLAUDE.md
 *~
 
 # OS generated files

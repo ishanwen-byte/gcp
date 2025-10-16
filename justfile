@@ -1,32 +1,31 @@
 #!/usr/bin/env just
+set shell := ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"]
 
-# Default recipe
-default: build
+# Default recipe - build with UPX compression by default
+default: build-upx
 
-# Build optimized release binary
+# Build optimized release binary only
 build:
     cargo build --release
-    @echo "✓ Release build completed"
+    echo "✓ Release build completed"
 
-# Build and compress with UPX
-upx: build
-    @echo "Applying UPX compression..."
-    @if command -v upx >/dev/null 2>&1; then \
-        upx --best --lzma target/release/gcp.exe; \
-        echo "✓ UPX compression applied successfully"; \
-    else \
-        echo "⚠️  UPX not found. Install UPX for smaller binary size"; \
-        echo "Download from: https://upx.github.io/"; \
-    fi
+# Build and compress with UPX (default behavior)
+build-upx:
+    pwsh -ExecutionPolicy Bypass -File scripts/build-upx.ps1
 
-# Show binary sizes
+# UPX compression only (for existing binary)
+upx:
+    pwsh -ExecutionPolicy Bypass -File scripts/upx-only.ps1
+
+# Show binary sizes with compression comparison
 size:
-    @echo "=== Binary Sizes ==="
-    @if [ -f target/release/gcp.exe ]; then \
-        echo "Release binary: $(powershell -c "(Get-Item 'target/release/gcp.exe').Length/1KB") KB"; \
-    else \
-        echo "Release binary not found. Run 'just build' first."; \
-    fi
+    echo "=== Binary Size Analysis ==="
+    pwsh -ExecutionPolicy Bypass -File scripts/size.ps1
+
+# Detailed size comparison with backup
+size-compare:
+    echo "=== Detailed Size Comparison ==="
+    pwsh -ExecutionPolicy Bypass -File scripts/size-compare.ps1
 
 # Clean build artifacts
 clean:
@@ -42,5 +41,18 @@ test:
 help-test:
     cargo run -- --help
 
-# Build and test
-all: clean build upx help-test size
+# Build and test (with compression)
+all: clean build-upx help-test size-compare
+
+# Build and test without compression
+all-no-compress: clean build help-test size
+
+# Alternative simple commands for better compatibility
+build-simple:
+    cargo build --release
+
+clean-simple:
+    cargo clean
+
+test-simple:
+    cargo test
