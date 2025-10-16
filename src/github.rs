@@ -1,6 +1,5 @@
 //! Minimal GitHub URL parsing for lightweight environment
 
-use std::string::String;
 use crate::error::{GcpError, GcpResult};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -22,19 +21,29 @@ pub struct GitHubUrl {
 
 impl GitHubUrl {
     pub fn parse(url_str: &str) -> GcpResult<Self> {
-        let parsed = url::Url::parse(url_str)?;
+        // Basic URL validation
+        if !url_str.starts_with("https://") {
+            return Err(GcpError::InvalidUrl("Only HTTPS URLs are supported".to_string()));
+        }
 
-        match parsed.host_str() {
-            Some("github.com") => Self::parse_github_url(&parsed),
-            Some("raw.githubusercontent.com") => Self::parse_raw_url(&parsed),
+        // Extract host
+        let after_protocol = &url_str[8..];
+        let host_end = after_protocol.find('/').unwrap_or(after_protocol.len());
+        let host = &after_protocol[..host_end];
+
+        // Parse path
+        let path = &after_protocol[host_end..];
+        let path = path.trim_start_matches('/');
+
+        match host {
+            "github.com" => Self::parse_github_url(path),
+            "raw.githubusercontent.com" => Self::parse_raw_url(path, url_str),
             _ => Err(GcpError::InvalidUrl("Only GitHub URLs are supported".to_string())),
         }
     }
 
-    fn parse_github_url(parsed: &url::Url) -> GcpResult<Self> {
-        let segments: Vec<&str> = parsed.path_segments()
-            .ok_or_else(|| GcpError::InvalidUrl("Invalid path".to_string()))?
-            .collect();
+    fn parse_github_url(path: &str) -> GcpResult<Self> {
+        let segments: Vec<&str> = path.split('/').collect();
 
         if segments.len() < 2 {
             return Err(GcpError::InvalidUrl("Invalid GitHub URL format".to_string()));
@@ -91,10 +100,8 @@ impl GitHubUrl {
         }
     }
 
-    fn parse_raw_url(parsed: &url::Url) -> GcpResult<Self> {
-        let segments: Vec<&str> = parsed.path_segments()
-            .ok_or_else(|| GcpError::InvalidUrl("Invalid raw URL path".to_string()))?
-            .collect();
+    fn parse_raw_url(path: &str, original_url: &str) -> GcpResult<Self> {
+        let segments: Vec<&str> = path.split('/').collect();
 
         if segments.len() < 3 {
             return Err(GcpError::InvalidUrl("Invalid raw GitHub URL format".to_string()));
@@ -117,8 +124,25 @@ impl GitHubUrl {
             path,
             ref_,
             url_type,
-            raw_url: parsed.to_string(),
+            raw_url: original_url.to_string(),
         })
+    }
+
+    /// Extract filename from path for file URLs
+    pub fn filename(&self) -> Option<String> {
+        match self.url_type {
+            UrlType::File => {
+                self.path.as_ref().and_then(|path| {
+                    path.split('/').last().map(|filename| filename.to_string())
+                })
+            }
+            UrlType::Folder => {
+                self.path.as_ref().and_then(|path| {
+                    path.split('/').last().map(|foldername| foldername.to_string())
+                })
+            }
+            UrlType::Repository => None,
+        }
     }
 
     pub fn api_url(&self) -> String {

@@ -1,27 +1,44 @@
 //! Minimal GitHub Copier - lightweight version
 //! Usage: gcp <github_url> [destination]
+#[global_allocator]
+static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
 use std::env;
 use std::process;
-use gcp_minimal::{download_from_github, Config};
+use gcp::download_from_github;
 
 fn print_usage() {
     eprintln!("GitHub Copier - Minimal Version");
     eprintln!("Downloads files/folders from public GitHub repositories");
     eprintln!();
-    eprintln!("Usage: gcp <github_url> [destination]");
+    eprintln!("Usage: gcp [OPTIONS] <github_url> [destination]");
     eprintln!();
-    eprintln!("Examples:");
+    eprintln!("OPTIONS:");
+    eprintln!("  -h, --help     Print help information");
+    eprintln!();
+    eprintln!("ARGUMENTS:");
+    eprintln!("  <github_url>    GitHub URL to download from");
+    eprintln!("  <destination>   Local destination path (optional)");
+    eprintln!();
+    eprintln!("EXAMPLES:");
     eprintln!("  gcp https://github.com/owner/repo/blob/main/file.txt");
     eprintln!("  gcp https://github.com/owner/repo/blob/main/file.txt downloaded_file.txt");
     eprintln!("  gcp https://github.com/owner/repo/tree/main/folder");
     eprintln!("  gcp https://github.com/owner/repo/tree/main/folder ./local_folder");
     eprintln!();
-    eprintln!("Note: This version only supports public repositories");
+    eprintln!("NOTES:");
+    eprintln!("  Downloads with original filename by default when no destination is specified");
+    eprintln!("  Only supports public repositories in this minimal version");
 }
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+
+    // Handle help flag
+    if args.len() == 2 && (args[1] == "--help" || args[1] == "-h") {
+        print_usage();
+        process::exit(0);
+    }
 
     if args.len() < 2 || args.len() > 3 {
         print_usage();
@@ -39,14 +56,8 @@ fn main() {
         process::exit(1);
     }
 
-    // Configure downloader
-    let config = Config {
-        user_agent: "gcp-minimal/0.1.0".to_string(),
-        timeout_secs: 30,
-    };
-
     // Download
-    match download_from_github(github_url, destination, Some(config)) {
+    match download_from_github(github_url, destination) {
         Ok(()) => {
             eprintln!("✓ Download completed successfully");
         }
