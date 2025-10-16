@@ -7,12 +7,12 @@ Cargo.lock
 .vscode/
 .idea/
 *.swp
-.serena
 *.swo
-.spec-workflow
-.specify
-.scripts
-.specs
+specs/
+.spec-workflow/
+.claude/
+.serena/
+.specify/
 *~
 
 # OS generated files
