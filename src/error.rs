@@ -1,88 +1,83 @@
-use std::path::PathBuf;
-use chrono::{DateTime, Utc};
-use thiserror::Error;
+//! Minimal error handling for lightweight GitHub downloader
 
-#[derive(Debug, Error)]
+use std::string::String;
+
+/// Minimal error type without thiserror dependency
+#[derive(Debug, Clone)]
 pub enum GcpError {
-    #[error("Invalid GitHub URL: {url}")]
-    InvalidUrl { url: String },
-
-    #[error("GitHub API error: {message} (status: {status})")]
-    GitHubApi { status: u16, message: String },
-
-    #[error("Rate limit exceeded. Resets at: {reset_time}")]
-    RateLimit { reset_time: DateTime<Utc> },
-
-    #[error("Authentication failed: {reason}")]
-    Authentication { reason: String },
-
-    #[error("File system error: {path} - {reason}")]
-    FileSystem { path: PathBuf, reason: String },
-
-    #[error("Network error: {source}")]
-    Network { #[from] source: reqwest::Error },
-
-    #[error("Download failed: {file} - {reason}")]
-    DownloadFailed { file: String, reason: String },
-
-    #[error("File conflict at {path}: {existing} vs {incoming}")]
-    FileConflict { path: PathBuf, existing: String, incoming: String },
-
-    #[error("IO error: {source}")]
-    Io { #[from] source: std::io::Error },
-
-    #[error("URL parsing error: {source}")]
-    UrlParse { #[from] source: url::ParseError },
-
-    #[error("JSON error: {source}")]
-    Json { #[from] source: serde_json::Error },
-
-    #[error("Configuration error: {message}")]
-    Config { message: String },
-
-    #[error("Invalid file path: {path}")]
-    InvalidPath { path: String },
-
-    #[error("File too large: {size} bytes exceeds limit of {limit} bytes")]
-    FileTooLarge { size: u64, limit: u64 },
-
-    #[error("Operation cancelled")]
-    Cancelled,
-
-    #[error("File IO error: {path} - {source}")]
-    FileIo { path: PathBuf, #[source] source: std::io::Error },
-
-    #[error("Invalid operation: {operation} - {reason}")]
-    InvalidOperation { operation: String, reason: String },
+    InvalidUrl(String),
+    NetworkError(String),
+    FileSystemError(String),
+    ParseError(String),
+    UnsupportedOperation(String),
+    IoError(String),
+    NotFound(String),
+    PermissionDenied(String),
 }
 
-pub type Result<T> = std::result::Result<T, GcpError>;
-
-impl GcpError {
-    pub fn is_retryable(&self) -> bool {
+impl core::fmt::Display for GcpError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            GcpError::Network { .. } => true,
-            GcpError::RateLimit { .. } => true,
-            GcpError::GitHubApi { status, .. } => {
-                // Retry on server errors (5xx) and rate limiting (429)
-                *status >= 500 || *status == 429
+            GcpError::InvalidUrl(url) => write!(f, "Invalid URL: {}", url),
+            GcpError::NetworkError(msg) => write!(f, "Network error: {}", msg),
+            GcpError::FileSystemError(msg) => write!(f, "Filesystem error: {}", msg),
+            GcpError::ParseError(msg) => write!(f, "Parse error: {}", msg),
+            GcpError::UnsupportedOperation(msg) => write!(f, "Unsupported operation: {}", msg),
+            GcpError::IoError(msg) => write!(f, "IO error: {}", msg),
+            GcpError::NotFound(msg) => write!(f, "Not found: {}", msg),
+            GcpError::PermissionDenied(msg) => write!(f, "Permission denied: {}", msg),
+        }
+    }
+}
+
+/// Result type alias
+pub type GcpResult<T> = Result<T, GcpError>;
+
+// Implement standard error traits
+impl std::error::Error for GcpError {}
+
+// Conversion from URL parse errors
+impl From<url::ParseError> for GcpError {
+    fn from(err: url::ParseError) -> Self {
+        GcpError::InvalidUrl(err.to_string())
+    }
+}
+
+// Conversion from serde_json errors
+impl From<serde_json::Error> for GcpError {
+    fn from(err: serde_json::Error) -> Self {
+        GcpError::ParseError(err.to_string())
+    }
+}
+
+// Conversion from base64 errors
+impl From<base64::DecodeError> for GcpError {
+    fn from(err: base64::DecodeError) -> Self {
+        GcpError::ParseError(format!("Base64 decode error: {}", err))
+    }
+}
+
+// Conversion from ureq errors
+impl From<ureq::Error> for GcpError {
+    fn from(err: ureq::Error) -> Self {
+        match err {
+            ureq::Error::Transport(transport_err) => {
+                GcpError::NetworkError(format!("Transport error: {}", transport_err))
             }
-            _ => false,
+            ureq::Error::Status(status, response) => {
+                GcpError::NetworkError(format!("HTTP {}: {}", status, response.status_text()))
+            }
         }
     }
+}
 
-    pub fn is_auth_error(&self) -> bool {
-        match self {
-            GcpError::Authentication { .. } => true,
-            GcpError::GitHubApi { status, .. } => *status == 401 || *status == 403,
-            _ => false,
-        }
-    }
-
-    pub fn is_not_found(&self) -> bool {
-        match self {
-            GcpError::GitHubApi { status, .. } => *status == 404,
-            _ => false,
+// Conversion from std::io errors
+impl From<std::io::Error> for GcpError {
+    fn from(err: std::io::Error) -> Self {
+        match err.kind() {
+            std::io::ErrorKind::NotFound => GcpError::NotFound(err.to_string()),
+            std::io::ErrorKind::PermissionDenied => GcpError::PermissionDenied(err.to_string()),
+            _ => GcpError::IoError(err.to_string()),
         }
     }
 }
