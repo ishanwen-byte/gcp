@@ -8,8 +8,25 @@ use std::process;
 use gcp::download_from_github;
 
 fn print_usage() {
-    eprintln!("GitHub Copier - Minimal Version");
-    eprintln!("Downloads files/folders from public GitHub repositories");
+    eprintln!(
+        r#"
+   _____ _____    _____ _    _  ____  _      ____
+  / ____|  __ \  / ____| |  | |/ __ \| |    |  _ \
+ | (___ | |__) || |    | |__| | |  | | |    | |_) |
+  \___ \|  _  / | |    |  __  | |  | | |    |  _ <
+  ____) | | \ \ | |____| |  | | |__| | |____| |_) |
+ |_____/|_|  \_\\_____|_|  |_|\____/|______|____/
+
+         _      _   _      ____   _____  _
+        | |    | | | |    / __ \ / ____| |
+        | |    | | | |   | |  | | (___  |
+        | |    | | | |   | |  | |\___ \ |
+        | |____| |_| |   | |__| |____) ||____
+        |______|\___/     \____/|_____/|____/
+
+    GitHub Copier - Minimal Version
+    Downloads files/folders from public GitHub repositories"#
+    );
     eprintln!();
     eprintln!("Usage: gcp [OPTIONS] <github_url> [destination]");
     eprintln!();
