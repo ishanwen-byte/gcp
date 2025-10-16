@@ -10,7 +10,7 @@ path = "src/main.rs"
 [dependencies]
 # Minimal dependencies for maximal size reduction
 url = { version = "2.5", default-features = false, features = ["serde"] }
-ureq = { version = "2.9", default-features = false, features = ["json"] }
+ureq = { version = "2.9", default-features = false, features = ["json", "tls"] }
 
 # Minimal serde support
 serde = { version = "1.0", default-features = false, features = ["derive"] }

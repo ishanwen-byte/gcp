@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::Path;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use crate::error::{GcpError, GcpResult};
 use crate::github::{GitHubUrl, UrlType};
 use crate::Config;
@@ -40,26 +41,59 @@ impl FileDownloader {
             ));
         }
 
-        // Use raw URL for direct file download
+        // Use GitHub API to get file content (base64 encoded)
+        let api_url = github_url.api_url();
         let response = self.agent
-            .get(&github_url.raw_url)
+            .get(&api_url)
             .call()
             .map_err(GcpError::from)?;
 
         if response.status() >= 400 {
             return Err(GcpError::NetworkError(format!(
-                "HTTP {} from GitHub",
+                "GitHub API returned HTTP {}",
                 response.status()
             )));
         }
 
-        let data = response.into_string()
-            .map_err(|e| GcpError::NetworkError(format!("Failed to read response: {}", e)))?;
+        let file_info: GitHubFile = response.into_json()
+            .map_err(GcpError::from)?;
 
-        // Write to destination
-        fs::write(destination, data)?;
+        // Try to decode base64 content directly from API response
+        if let (Some(content), Some(encoding)) = (file_info.content, file_info.encoding) {
+            if encoding == "base64" {
+                let clean_content = content.trim().replace('\n', "").replace('\r', "");
+                let decoded = STANDARD.decode(&clean_content)
+                    .map_err(GcpError::from)?;
+                let data = String::from_utf8(decoded)
+                    .map_err(|e| GcpError::ParseError(format!("UTF-8 decode error: {}", e)))?;
 
-        Ok(())
+                fs::write(destination, data)?;
+                return Ok(());
+            }
+        }
+
+        // Fallback: try download URL if available
+        if let Some(download_url) = file_info.download_url {
+            let response = self.agent
+                .get(&download_url)
+                .call()
+                .map_err(GcpError::from)?;
+
+            if response.status() < 400 {
+                let data = response.into_string()
+                    .map_err(|e| GcpError::NetworkError(format!("Failed to read file: {}", e)))?;
+
+                fs::write(destination, data)?;
+                Ok(())
+            } else {
+                Err(GcpError::NetworkError(format!(
+                    "Failed to download file: HTTP {}",
+                    response.status()
+                )))
+            }
+        } else {
+            Err(GcpError::NetworkError("No file content available".to_string()))
+        }
     }
 
     /// Download a folder from GitHub recursively
