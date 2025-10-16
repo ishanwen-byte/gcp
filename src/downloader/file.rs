@@ -80,8 +80,7 @@ impl FileDownloader {
                 source: e,
             })?;
 
-        info!("Successfully downloaded {} bytes to {}", size, final_destination.display());
-
+  
         Ok(final_destination)
     }
 
@@ -106,8 +105,7 @@ impl FileDownloader {
                 source: e,
             })?;
 
-        info!("Successfully downloaded to {}", final_destination.display());
-
+    
         Ok(final_destination)
     }
 

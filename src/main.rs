@@ -266,7 +266,6 @@ async fn main() {
 
     match result {
         Ok(path) => {
-            info!("Successfully downloaded to: {}", path.display());
             if !cli.quiet {
                 println!("✓ Successfully copied to {}", path.display());
             }
