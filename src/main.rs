@@ -1,7 +1,5 @@
 //! Minimal GitHub Copier - lightweight version
 //! Usage: gcp <github_url> [destination]
-#[global_allocator]
-static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
 use std::env;
 use std::process;

@@ -4,10 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-# 使用更轻量的 HTTP 客户端，添加最小 TLS 支持
-attohttpc = { version = "0.30.1", default-features = false, features = ["tls"] }
-base64 = { version = "0.22", default-features = false, features = ["alloc"] }
-wee_alloc = { version = "0.4", default-features = false }
+# 使用更轻量的native TLS实现，禁用vendored特性
+native-tls = { version = "0.2", default-features = false }
 [dev-dependencies]
 tempfile = "3.8"
 

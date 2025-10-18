@@ -32,20 +32,6 @@ impl std::error::Error for GcpError {}
 
 
 
-// Conversion from base64 errors
-impl From<base64::DecodeError> for GcpError {
-    fn from(err: base64::DecodeError) -> Self {
-        GcpError::ParseError(format!("Base64 decode error: {}", err))
-    }
-}
-
-// Conversion from attohttpc errors
-impl From<attohttpc::Error> for GcpError {
-    fn from(err: attohttpc::Error) -> Self {
-        GcpError::NetworkError(format!("HTTP error: {}", err))
-    }
-}
-
 // Conversion from std::io errors
 impl From<std::io::Error> for GcpError {
     fn from(err: std::io::Error) -> Self {
