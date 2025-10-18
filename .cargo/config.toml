@@ -1,0 +1,8 @@
+# Windows optimizations for GCP
+
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"
+rustflags = [
+    "-C", "link-args=/SUBSYSTEM:CONSOLE",
+    "-C", "link-args=/OPT:REF,ICF",
+]

@@ -38,7 +38,9 @@ Thumbs.db
 *.temp
 
 # Configuration files with sensitive data
+# Allow .cargo/config.toml but ignore other config.toml files
 config.toml
+!.cargo/config.toml
 *.pem
 *.key
 
