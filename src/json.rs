@@ -25,11 +25,13 @@ pub fn extract_json_field(json_str: &str, field: &str) -> String {
         let value_start = start + quote_start + 1;
         let remaining = &json_str[value_start..];
 
-        // Find the closing quote, handling escaped quotes
+        // Find the closing quote, handling escaped quotes.
+        // Track byte offsets (not char indices) so multi-byte UTF-8
+        // characters in the value slice correctly.
         let mut escaped = false;
         let mut quote_end = None;
 
-        for (i, c) in remaining.chars().enumerate() {
+        for (byte_i, c) in remaining.char_indices() {
             if escaped {
                 escaped = false;
                 continue;
@@ -38,7 +40,7 @@ pub fn extract_json_field(json_str: &str, field: &str) -> String {
             match c {
                 '\\' => escaped = true,
                 '"' => {
-                    quote_end = Some(i);
+                    quote_end = Some(byte_i);
                     break;
                 }
                 _ => {}
@@ -315,6 +317,21 @@ mod tests {
     fn test_extract_field_with_unicode_escape() {
         let json = r#"{"name": "\u4f60\u597d"}"#;
         assert_eq!(extract_json_field(json, "name"), "你好");
+    }
+
+    #[test]
+    fn test_extract_field_raw_cjk_value() {
+        // Regression: literal (unescaped) multi-byte UTF-8 in the value used
+        // to panic because char indices were used as byte offsets.
+        let json = r#"{"name": "发布说明.txt", "path": "release/发布说明.txt"}"#;
+        assert_eq!(extract_json_field(json, "name"), "发布说明.txt");
+        assert_eq!(extract_json_field(json, "path"), "release/发布说明.txt");
+    }
+
+    #[test]
+    fn test_extract_field_raw_emoji_value() {
+        let json = r#"{"name": "a😀b"}"#;
+        assert_eq!(extract_json_field(json, "name"), "a😀b");
     }
 
     #[test]

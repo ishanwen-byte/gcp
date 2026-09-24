@@ -3,7 +3,7 @@
 [![Rust](https://img.shields.io/badge/rust-2024--edition-orange.svg)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-从公开 GitHub 仓库下载文件与文件夹的极简命令行工具。
+从公开 GitHub / Gitea 仓库下载文件与文件夹的极简命令行工具。
 
 ## 特性
 
@@ -14,6 +14,7 @@
 - **非 ASCII 路径支持** - 中文等非 ASCII 文件名/路径自动百分号编码（RFC 3986）
 - **受限网络友好** - 文件夹下载统一走 `api.github.com` 内容端点（内嵌 base64），不依赖 `raw.githubusercontent.com` 的可达性
 - **代理支持** - 自动读取 `HTTPS_PROXY` / `https_proxy` / `ALL_PROXY` 环境变量（HTTP 代理，CONNECT 隧道，端到端 TLS 不受影响）
+- **Gitea 兼容** - 支持任意 Gitea 实例（含内网 http:// 与自定义端口），URL 格式 `http(s)://<host>/<owner>/<repo>/src/<ref>/<path>`
 - **极小体积** - 发布版约 213 KB（Windows x64），仅一个运行时依赖
 
 ## 安装
@@ -53,12 +54,16 @@ gcp https://github.com/user/repo/tree/v1.0.0/docs ./docs
 
 # raw URL 也支持
 gcp https://raw.githubusercontent.com/user/repo/main/file.txt
+
+# Gitea 实例（内网/自建）
+gcp http://192.168.3.14:3000/goliath/repo/src/main/docs/readme.md
+gcp http://gitea.example.com:3000/owner/repo/src/v1.0.0/release ./release
 ```
 
 ## 工作原理
 
-1. 解析 GitHub URL（owner / repo / ref / path）
-2. 请求 `https://api.github.com/repos/{owner}/{repo}/contents/{path}?ref={ref}`
+1. 解析 GitHub/Gitea URL（owner / repo / ref / path，Gitea 推导 `api_base`）
+2. 请求 `<api_base>/repos/{owner}/{repo}/contents/{path}?ref={ref}`（GitHub 为 api.github.com，Gitea 为 `<host>/api/v1`）
 3. 手写 JSON 提取器解析响应（完整字符串反转义，支持 `\uXXXX` 代理对）
 4. base64 解码内容并按字节写入磁盘
 
@@ -81,7 +86,7 @@ src/
 
 | 依赖 | 用途 |
 |---|---|
-| `native-tls` | TLS（Windows 用 schannel，macOS 用 Security.framework，Linux 用 OpenSSL） |
+| `native-tls` | TLS（Windows 用 schannel，macOS 用 Security.framework，Linux 用 OpenSSL；Gitea http:// 场景不经过 TLS） |
 
 base64 与 JSON 解析均为手写实现，无第三方依赖。
 

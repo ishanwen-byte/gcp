@@ -66,6 +66,8 @@ fn main() {
     // Validate URL format
     if !github_url.starts_with("https://github.com/")
         && !github_url.starts_with("https://raw.githubusercontent.com/")
+        && !github_url.starts_with("http://")
+        && !github_url.starts_with("https://")
     {
         eprintln!("Error: Only GitHub URLs are supported");
         print_usage();

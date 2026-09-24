@@ -45,7 +45,7 @@ impl GitHubClient {
         // Get file content via GitHub API
         let api_url = url.api_url();
         let (host, path) = self.parse_url(&api_url)?;
-        let response = self.http_get(&host, &path)?;
+        let response = self.http_get(&api_url, &host, &path)?;
 
         // Parse response and extract content
         let response_text = std::str::from_utf8(&response)
@@ -71,7 +71,7 @@ impl GitHubClient {
                 // Use download URL as fallback
                 let download_url = file_info.download_url.unwrap();
                 let (host, path) = self.parse_url(&download_url)?;
-                let content = self.http_get(&host, &path)?;
+                let content = self.http_get(&download_url, &host, &path)?;
                 std::fs::write(destination, content)?;
             }
             None => {
@@ -92,7 +92,7 @@ impl GitHubClient {
         // Get folder contents via GitHub API
         let api_url = url.api_url();
         let (host, path) = self.parse_url(&api_url)?;
-        let response = self.http_get(&host, &path)?;
+        let response = self.http_get(&api_url, &host, &path)?;
         let response_text = std::str::from_utf8(&response)
             .map_err(|e| GcpError::ParseError(format!("Invalid UTF-8 in response: {}", e)))?;
         let files = parse_github_file_array(response_text)?;
@@ -107,14 +107,15 @@ impl GitHubClient {
                 // content, works when raw.githubusercontent.com is unreachable,
                 // and respects the requested ref.
                 let api = format!(
-                    "https://api.github.com/repos/{}/{}/contents/{}?ref={}",
+                    "{}/repos/{}/{}/contents/{}?ref={}",
+                    url.api_base,
                     url.owner,
                     url.repo,
                     file.path,
                     url.ref_.as_deref().unwrap_or("main")
                 );
                 let (host, path) = self.parse_url(&api)?;
-                let response = self.http_get(&host, &path)?;
+                let response = self.http_get(&api, &host, &path)?;
 
                 match std::str::from_utf8(&response)
                     .map_err(|e| GcpError::ParseError(format!("Invalid UTF-8 in response: {}", e)))
@@ -139,7 +140,7 @@ impl GitHubClient {
                         } else if let Some(download_url) = file.download_url {
                             // Fallback to raw URL if API did not embed content
                             let (host, path) = self.parse_url(&download_url)?;
-                            let content = self.http_get(&host, &path)?;
+                            let content = self.http_get(&download_url, &host, &path)?;
                             std::fs::write(&file_path, content)?;
                             downloaded_count += 1;
                         }
@@ -157,6 +158,9 @@ impl GitHubClient {
                     ref_: url.ref_.clone(),
                     url_type: UrlType::Folder,
                     raw_url: String::new(),
+                    api_base: url.api_base.clone(),
+                    scheme: url.scheme.clone(),
+                    web_host: url.web_host.clone(),
                 };
 
                 if let Err(e) =
@@ -171,15 +175,13 @@ impl GitHubClient {
         Ok(())
     }
 
-    /// Parse URL into host and path
+    /// Parse URL into host and path (http or https)
     fn parse_url(&self, url: &str) -> GcpResult<(String, String)> {
-        if !url.starts_with("https://") {
-            return Err(GcpError::InvalidUrl(
-                "Only HTTPS URLs are supported".to_string(),
-            ));
-        }
+        let remaining = url
+            .strip_prefix("https://")
+            .or_else(|| url.strip_prefix("http://"))
+            .ok_or_else(|| GcpError::InvalidUrl("Only HTTP(S) URLs are supported".to_string()))?;
 
-        let remaining = &url[8..]; // Remove "https://"
         if let Some(slash_pos) = remaining.find('/') {
             let host = remaining[..slash_pos].to_string();
             let path = if slash_pos < remaining.len() - 1 {
@@ -193,12 +195,29 @@ impl GitHubClient {
         }
     }
 
-    /// Make HTTPS GET request
-    fn http_get(&self, host: &str, path: &str) -> GcpResult<Vec<u8>> {
+    /// Make an HTTP(S) GET request.
+    /// `full_url` is used to detect the scheme (http for intranet Gitea);
+    /// `host` may carry an explicit port (e.g. "192.168.3.14:3000").
+    fn http_get(&self, full_url: &str, host: &str, path: &str) -> GcpResult<Vec<u8>> {
+        let is_tls = full_url.starts_with("https://");
+        let default_port: u16 = if is_tls { 443 } else { 80 };
+        // Split explicit port off the host if present
+        let (host_only, port) = match host.rfind(':') {
+            Some(i)
+                if !host[i + 1..].is_empty()
+                    && host[i + 1..].chars().all(|c| c.is_ascii_digit()) =>
+            {
+                let p = host[i + 1..].parse::<u16>().unwrap_or(default_port);
+                (host[..i].to_string(), p)
+            }
+            _ => (host.to_string(), default_port),
+        };
+
         // Connect to TCP, honoring a proxy from the environment if present.
         // An HTTP proxy is used as a CONNECT tunnel so end-to-end TLS to the
-        // origin host is preserved.
-        let tcp_stream = match Self::proxy_from_env() {
+        // origin host is preserved. Proxies are only used for TLS traffic;
+        // plain-HTTP intranet requests go direct.
+        let tcp_stream = match Self::proxy_from_env().filter(|_| is_tls) {
             Some((proxy_host, proxy_port)) => {
                 let stream: TcpStream = TcpStream::connect((proxy_host.as_str(), proxy_port))
                     .map_err(|e| {
@@ -207,16 +226,16 @@ impl GitHubClient {
                             proxy_host, proxy_port, e
                         ))
                     })?;
-                // Send CONNECT to establish a tunnel for `host:443`
+                // Send CONNECT to establish a tunnel
                 let mut stream = stream;
                 let connect_req = format!(
-                    "CONNECT {host}:443 HTTP/1.1\r\nHost: {host}:443\r\n\r\n",
-                    host = host
+                    "CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n",
+                    host = host_only,
+                    port = port
                 );
                 stream.write_all(connect_req.as_bytes()).map_err(|e| {
                     GcpError::NetworkError(format!("Failed to send CONNECT: {}", e))
                 })?;
-                // Read the proxy's response line
                 let mut reader = BufReader::new(&mut stream);
                 let mut status = String::new();
                 reader.read_line(&mut status).map_err(|e| {
@@ -228,7 +247,6 @@ impl GitHubClient {
                         status.trim()
                     )));
                 }
-                // Drain remaining response headers
                 loop {
                     let mut line = String::new();
                     reader.read_line(&mut line).map_err(|e| {
@@ -238,20 +256,12 @@ impl GitHubClient {
                         break;
                     }
                 }
-                // The tunnel is established; the TLS handshake happens over it
                 stream
             }
-            None => TcpStream::connect((host, 443))
+            None => TcpStream::connect((host_only.as_str(), port))
                 .map_err(|e| GcpError::NetworkError(format!("TCP connection failed: {}", e)))?,
         };
 
-        // Perform TLS handshake
-        let mut tls_stream = self
-            .tls_connector
-            .connect(host, tcp_stream)
-            .map_err(|e| GcpError::NetworkError(format!("TLS handshake failed: {}", e)))?;
-
-        // Send HTTP request
         // Percent-encode non-ASCII bytes in the request line: raw UTF-8 in a
         // request target is a protocol violation and gets a 400 from GitHub.
         let encoded_path = Self::percent_encode_path(path);
@@ -260,12 +270,22 @@ impl GitHubClient {
             encoded_path, host
         );
 
-        tls_stream
-            .write_all(request.as_bytes())
-            .map_err(|e| GcpError::NetworkError(format!("Failed to send request: {}", e)))?;
-
-        // Read and parse HTTP response
-        self.read_http_response(&mut tls_stream)
+        if is_tls {
+            let mut tls_stream = self
+                .tls_connector
+                .connect(&host_only, tcp_stream)
+                .map_err(|e| GcpError::NetworkError(format!("TLS handshake failed: {}", e)))?;
+            tls_stream
+                .write_all(request.as_bytes())
+                .map_err(|e| GcpError::NetworkError(format!("Failed to send request: {}", e)))?;
+            self.read_http_response(&mut tls_stream)
+        } else {
+            let mut stream = tcp_stream;
+            stream
+                .write_all(request.as_bytes())
+                .map_err(|e| GcpError::NetworkError(format!("Failed to send request: {}", e)))?;
+            self.read_http_response(&mut stream)
+        }
     }
 
     /// Read `HTTPS_PROXY`/`https_proxy` (or `ALL_PROXY`) from the environment
@@ -459,9 +479,21 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_url_rejects_http() {
+    fn test_parse_url_accepts_http_for_gitea() {
+        // Plain http is valid for intranet Gitea instances
         let client = GitHubClient::new().unwrap();
-        assert!(client.parse_url("http://api.github.com/x").is_err());
+        let (host, path) = client
+            .parse_url("http://192.168.3.14:3000/api/v1/repos/a/b/contents/c?ref=main")
+            .unwrap();
+        assert_eq!(host, "192.168.3.14:3000");
+        assert_eq!(path, "/api/v1/repos/a/b/contents/c?ref=main");
+    }
+
+    #[test]
+    fn test_parse_url_rejects_non_http_scheme() {
+        let client = GitHubClient::new().unwrap();
+        assert!(client.parse_url("ftp://api.github.com/x").is_err());
+        assert!(client.parse_url("api.github.com/x").is_err());
     }
 
     #[test]
@@ -504,6 +536,9 @@ mod tests {
             ref_: Some("master".to_string()),
             url_type: UrlType::File,
             raw_url: String::new(),
+            api_base: "https://api.github.com".to_string(),
+            scheme: "https".to_string(),
+            web_host: "github.com".to_string(),
         };
 
         let dest = dir.join("nested").join("deep").join("out.txt");
