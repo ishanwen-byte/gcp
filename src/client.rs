@@ -35,6 +35,13 @@ impl GitHubClient {
 
     /// Download a single file
     fn download_file(&self, url: &GitHubUrl, destination: &str) -> GcpResult<()> {
+        // Create parent directories if the destination includes a path
+        if let Some(parent) = std::path::Path::new(destination).parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+
         // Get file content via GitHub API
         let api_url = url.api_url();
         let (host, path) = self.parse_url(&api_url)?;
@@ -188,9 +195,55 @@ impl GitHubClient {
 
     /// Make HTTPS GET request
     fn http_get(&self, host: &str, path: &str) -> GcpResult<Vec<u8>> {
-        // Connect to TCP
-        let tcp_stream = TcpStream::connect((host, 443))
-            .map_err(|e| GcpError::NetworkError(format!("TCP connection failed: {}", e)))?;
+        // Connect to TCP, honoring a proxy from the environment if present.
+        // An HTTP proxy is used as a CONNECT tunnel so end-to-end TLS to the
+        // origin host is preserved.
+        let tcp_stream = match Self::proxy_from_env() {
+            Some((proxy_host, proxy_port)) => {
+                let stream: TcpStream = TcpStream::connect((proxy_host.as_str(), proxy_port))
+                    .map_err(|e| {
+                        GcpError::NetworkError(format!(
+                            "TCP connection to proxy {}:{} failed: {}",
+                            proxy_host, proxy_port, e
+                        ))
+                    })?;
+                // Send CONNECT to establish a tunnel for `host:443`
+                let mut stream = stream;
+                let connect_req = format!(
+                    "CONNECT {host}:443 HTTP/1.1\r\nHost: {host}:443\r\n\r\n",
+                    host = host
+                );
+                stream.write_all(connect_req.as_bytes()).map_err(|e| {
+                    GcpError::NetworkError(format!("Failed to send CONNECT: {}", e))
+                })?;
+                // Read the proxy's response line
+                let mut reader = BufReader::new(&mut stream);
+                let mut status = String::new();
+                reader.read_line(&mut status).map_err(|e| {
+                    GcpError::NetworkError(format!("Failed to read CONNECT response: {}", e))
+                })?;
+                if !status.starts_with("HTTP/1.1 2") && !status.starts_with("HTTP/1.0 2") {
+                    return Err(GcpError::NetworkError(format!(
+                        "Proxy CONNECT failed: {}",
+                        status.trim()
+                    )));
+                }
+                // Drain remaining response headers
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).map_err(|e| {
+                        GcpError::NetworkError(format!("Failed to read proxy header: {}", e))
+                    })?;
+                    if line.trim().is_empty() {
+                        break;
+                    }
+                }
+                // The tunnel is established; the TLS handshake happens over it
+                stream
+            }
+            None => TcpStream::connect((host, 443))
+                .map_err(|e| GcpError::NetworkError(format!("TCP connection failed: {}", e)))?,
+        };
 
         // Perform TLS handshake
         let mut tls_stream = self
@@ -210,6 +263,50 @@ impl GitHubClient {
 
         // Read and parse HTTP response
         self.read_http_response(&mut tls_stream)
+    }
+
+    /// Read `HTTPS_PROXY`/`https_proxy` (or `ALL_PROXY`) from the environment
+    /// and parse it into (host, port). Only http:// proxies are supported
+    /// (used as CONNECT tunnels).
+    fn proxy_from_env() -> Option<(String, u16)> {
+        let raw = std::env::var("HTTPS_PROXY")
+            .or_else(|_| std::env::var("https_proxy"))
+            .or_else(|_| std::env::var("ALL_PROXY"))
+            .or_else(|_| std::env::var("all_proxy"))
+            .ok()?
+            .trim()
+            .to_string();
+
+        if raw.is_empty() {
+            return None;
+        }
+
+        // Strip scheme
+        let rest = raw
+            .strip_prefix("http://")
+            .or_else(|| raw.strip_prefix("https://"))
+            .unwrap_or(&raw);
+
+        // Strip trailing path and userinfo
+        let rest = rest.split('/').next().unwrap_or(rest);
+        let rest = match rest.rfind('@') {
+            Some(i) => &rest[i + 1..],
+            None => rest,
+        };
+
+        let (host, port) = match rest.rfind(':') {
+            Some(i) => {
+                let p = rest[i + 1..].parse::<u16>().ok()?;
+                (rest[..i].to_string(), p)
+            }
+            None => (rest.to_string(), 80),
+        };
+
+        if host.is_empty() {
+            None
+        } else {
+            Some((host, port))
+        }
     }
 
     /// Read and parse HTTP response
@@ -369,5 +466,34 @@ mod tests {
         let client = GitHubClient::new().unwrap();
         let raw = b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
         assert!(client.read_http_response(&mut &raw[..]).is_err());
+    }
+
+    #[test]
+    fn test_download_file_creates_parent_dirs() {
+        // Validates that a destination with a missing parent directory
+        // is created rather than failing with "path not found".
+        // Uses an invalid host so the network call fails fast, after the
+        // parent-dir creation has already happened.
+        let client = GitHubClient::new().unwrap();
+        let dir = std::env::temp_dir().join("gcp_test_missing_parent");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let url = GitHubUrl {
+            owner: "octocat".to_string(),
+            repo: "Hello-World".to_string(),
+            path: Some("README".to_string()),
+            ref_: Some("master".to_string()),
+            url_type: UrlType::File,
+            raw_url: String::new(),
+        };
+
+        let dest = dir.join("nested").join("deep").join("out.txt");
+        let dest_str = dest.to_str().unwrap().to_string();
+
+        // The download itself fails (invalid host), but parent dirs must exist.
+        let _ = client.download_file(&url, &dest_str);
+        assert!(dir.join("nested").join("deep").is_dir());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
