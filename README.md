@@ -11,9 +11,10 @@
 - **文件夹递归下载** - 支持 `tree` URL，自动还原子目录结构
 - **分支/标签感知** - URL 中指定的 ref 会正确传递给 GitHub API（`?ref=...`）
 - **二进制安全** - 文件按字节写入，图片等二进制文件不损坏
+- **非 ASCII 路径支持** - 中文等非 ASCII 文件名/路径自动百分号编码（RFC 3986）
 - **受限网络友好** - 文件夹下载统一走 `api.github.com` 内容端点（内嵌 base64），不依赖 `raw.githubusercontent.com` 的可达性
 - **代理支持** - 自动读取 `HTTPS_PROXY` / `https_proxy` / `ALL_PROXY` 环境变量（HTTP 代理，CONNECT 隧道，端到端 TLS 不受影响）
-- **极小体积** - 发布版约 206 KB（Windows x64），仅一个运行时依赖
+- **极小体积** - 发布版约 213 KB（Windows x64），仅一个运行时依赖
 
 ## 安装
 
@@ -95,7 +96,7 @@ base64 与 JSON 解析均为手写实现，无第三方依赖。
 
 ```bash
 cargo build --release   # 构建优化版
-cargo test              # 运行测试（18 个）
+cargo test              # 运行测试（23 个）
 cargo fmt               # 格式化
 cargo clippy            # 静态检查
 ```

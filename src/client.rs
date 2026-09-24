@@ -252,9 +252,12 @@ impl GitHubClient {
             .map_err(|e| GcpError::NetworkError(format!("TLS handshake failed: {}", e)))?;
 
         // Send HTTP request
+        // Percent-encode non-ASCII bytes in the request line: raw UTF-8 in a
+        // request target is a protocol violation and gets a 400 from GitHub.
+        let encoded_path = Self::percent_encode_path(path);
         let request = format!(
             "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: gcp/0.1.0\r\nConnection: close\r\nAccept: */*\r\n\r\n",
-            path, host
+            encoded_path, host
         );
 
         tls_stream
@@ -307,6 +310,22 @@ impl GitHubClient {
         } else {
             Some((host, port))
         }
+    }
+
+    /// Percent-encode the request target so only valid ASCII reaches the wire.
+    /// Already-encoded sequences are left alone ('%' is preserved as-is),
+    /// unreserved characters pass through, everything else is %XX-encoded.
+    fn percent_encode_path(path: &str) -> String {
+        let mut out = String::with_capacity(path.len());
+        for byte in path.bytes() {
+            match byte {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' => out.push(byte as char),
+                b'/' | b'?' | b'&' | b'=' | b'%' | b'-' | b'_' | b'.' | b'~' | b'+' | b':'
+                | b'@' => out.push(byte as char),
+                _ => out.push_str(&format!("%{:02X}", byte)),
+            }
+        }
+        out
     }
 
     /// Read and parse HTTP response
@@ -495,5 +514,35 @@ mod tests {
         assert!(dir.join("nested").join("deep").is_dir());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_percent_encode_path_ascii_passthrough() {
+        // Plain ASCII path with query stays untouched
+        let p = "/repos/a/b/contents/src/lib.rs?ref=main";
+        assert_eq!(GitHubClient::percent_encode_path(p), p);
+    }
+
+    #[test]
+    fn test_percent_encode_path_cjk() {
+        // CJK characters must be %XX-encoded as their UTF-8 bytes
+        let out = GitHubClient::percent_encode_path("/repos/a/b/contents/中文.md?ref=main");
+        assert!(
+            out.starts_with("/repos/a/b/contents/%E4%B8%AD%E6%96%87.md?ref=main"),
+            "got: {out}"
+        );
+        assert!(out.is_ascii());
+    }
+
+    #[test]
+    fn test_percent_encode_path_preserves_existing_encoding() {
+        // Already-percent-encoded input must not be double-encoded
+        let p = "/repos/a/b/contents/%E4%B8%AD.md?ref=main";
+        assert_eq!(GitHubClient::percent_encode_path(p), p);
+    }
+
+    #[test]
+    fn test_percent_encode_path_space() {
+        assert_eq!(GitHubClient::percent_encode_path("/a b.txt"), "/a%20b.txt");
     }
 }
