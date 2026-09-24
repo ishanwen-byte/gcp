@@ -5,6 +5,7 @@ use std::net::TcpStream;
 use crate::error::{GcpError, GcpResult};
 use crate::github::{GitHubUrl, UrlType};
 use crate::base64::Base64Decoder;
+use crate::json::{GitHubFile, parse_github_file_array};
 
 /// GitHub client with integrated HTTPS
 pub struct GitHubClient {
@@ -46,12 +47,13 @@ impl GitHubClient {
         // Write file content
         match file_info.content {
             Some(content) if file_info.encoding.as_deref() == Some("base64") => {
-                let clean_content = content.trim().replace("\\n", "").replace("\\r", "").replace('\n', "").replace('\r', "");
+                let clean_content = content
+                    .chars()
+                    .filter(|c| *c != '\n' && *c != '\r' && *c != '\\')
+                    .collect::<String>();
                 let decoded = Base64Decoder::decode(&clean_content)
                     .map_err(|e| GcpError::ParseError(format!("Base64 decode error: {}", e)))?;
-                let content_str = String::from_utf8(decoded)
-                    .map_err(|e| GcpError::ParseError(format!("UTF-8 decode error: {}", e)))?;
-                std::fs::write(destination, content_str)?;
+                std::fs::write(destination, decoded)?;
             }
             Some(content) => {
                 // Content is not base64 encoded
@@ -91,11 +93,49 @@ impl GitHubClient {
             let file_path = std::path::Path::new(destination).join(&file.name);
 
             if file.file_type == "file" {
-                if let Some(download_url) = file.download_url {
-                    let (host, path) = self.parse_url(&download_url)?;
-                    let content = self.http_get(&host, &path)?;
-                    std::fs::write(&file_path, content)?;
-                    downloaded_count += 1;
+                // Prefer the API contents endpoint per file: it embeds base64
+                // content, works when raw.githubusercontent.com is unreachable,
+                // and respects the requested ref.
+                let api = format!(
+                    "https://api.github.com/repos/{}/{}/contents/{}?ref={}",
+                    url.owner,
+                    url.repo,
+                    file.path,
+                    url.ref_.as_deref().unwrap_or("main")
+                );
+                let (host, path) = self.parse_url(&api)?;
+                let response = self.http_get(&host, &path)?;
+
+                match std::str::from_utf8(&response)
+                    .map_err(|e| GcpError::ParseError(format!("Invalid UTF-8 in response: {}", e)))
+                    .and_then(|t| GitHubFile::from_json(t))
+                {
+                    Ok(info) => {
+                        if let Some(content) = info.content {
+                            if info.encoding.as_deref() == Some("base64") {
+                                let clean: String = content
+                                    .chars()
+                                    .filter(|c| *c != '\n' && *c != '\r' && *c != '\\')
+                                    .collect();
+                                let decoded = Base64Decoder::decode(&clean)
+                                    .map_err(|e| GcpError::ParseError(format!("Base64 decode error: {}", e)))?;
+                                std::fs::write(&file_path, decoded)?;
+                                downloaded_count += 1;
+                            } else {
+                                std::fs::write(&file_path, content)?;
+                                downloaded_count += 1;
+                            }
+                        } else if let Some(download_url) = file.download_url {
+                            // Fallback to raw URL if API did not embed content
+                            let (host, path) = self.parse_url(&download_url)?;
+                            let content = self.http_get(&host, &path)?;
+                            std::fs::write(&file_path, content)?;
+                            downloaded_count += 1;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Warning: skipping {}: {}", file.name, e);
+                    }
                 }
             } else if file.file_type == "dir" {
                 // Recursively download subdirectory
@@ -262,115 +302,50 @@ impl GitHubClient {
     }
 }
 
-// GitHub file info structure (moved from downloader.rs)
-struct GitHubFile {
-    name: String,
-    path: String,
-    file_type: String,
-    download_url: Option<String>,
-    content: Option<String>,
-    encoding: Option<String>,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl GitHubFile {
-    fn from_json(json_str: &str) -> Result<Self, GcpError> {
-        let mut file = GitHubFile {
-            name: String::new(),
-            path: String::new(),
-            file_type: String::new(),
-            download_url: None,
-            content: None,
-            encoding: None,
-        };
-
-        file.name = extract_json_field(json_str, "name");
-        file.path = extract_json_field(json_str, "path");
-        file.file_type = extract_json_field(json_str, "type");
-        file.download_url = extract_optional_json_field(json_str, "download_url");
-        file.content = extract_optional_json_field(json_str, "content");
-        file.encoding = extract_optional_json_field(json_str, "encoding");
-
-        if file.name.is_empty() {
-            return Err(GcpError::ParseError("Invalid JSON format".to_string()));
-        }
-
-        Ok(file)
-    }
-}
-
-// JSON parsing utilities (moved from downloader.rs)
-fn extract_json_field(json_str: &str, field: &str) -> String {
-    let pattern = format!("\"{}\":", field);
-    if let Some(start) = json_str.find(&pattern) {
-        let after_field = &json_str[start + pattern.len()..];
-        if let Some(quote_start) = after_field.find('"') {
-            let after_first_quote = &after_field[quote_start + 1..];
-            if let Some(quote_end) = after_first_quote.find('"') {
-                return after_first_quote[..quote_end].to_string();
-            }
-        }
-    }
-    String::new()
-}
-
-fn extract_optional_json_field(json_str: &str, field: &str) -> Option<String> {
-    let pattern = format!("\"{}\":", field);
-    if let Some(start) = json_str.find(&pattern) {
-        let after_field = &json_str[start + pattern.len()..];
-        if after_field.trim_start().starts_with("null") {
-            return None;
-        }
-        if let Some(quote_start) = after_field.find('"') {
-            let after_first_quote = &after_field[quote_start + 1..];
-            if let Some(quote_end) = after_first_quote.find('"') {
-                let value = after_first_quote[..quote_end].to_string();
-                return if value.is_empty() {
-                    None
-                } else {
-                    Some(value)
-                };
-            }
-        }
-    }
-    None
-}
-
-fn parse_github_file_array(json_str: &str) -> Result<Vec<GitHubFile>, GcpError> {
-    let mut files = Vec::new();
-    let json_str = json_str.trim();
-
-    if !json_str.starts_with('[') {
-        return Err(GcpError::ParseError("Expected JSON array".to_string()));
+    #[test]
+    fn test_parse_url() {
+        let client = GitHubClient::new().unwrap();
+        let (host, path) = client.parse_url("https://api.github.com/repos/a/b/contents/c?ref=main").unwrap();
+        assert_eq!(host, "api.github.com");
+        assert_eq!(path, "/repos/a/b/contents/c?ref=main");
     }
 
-    let array_content = &json_str[1..json_str.len().saturating_sub(1)];
-    let mut current_object = String::new();
-    let mut brace_count = 0;
-    let mut in_string = false;
-
-    for ch in array_content.chars() {
-        if ch == '"' && (current_object.is_empty() || !current_object.ends_with('\\')) {
-            in_string = !in_string;
-        }
-
-        if !in_string {
-            if ch == '{' {
-                brace_count += 1;
-            } else if ch == '}' {
-                brace_count -= 1;
-                if brace_count == 0 {
-                    current_object.push(ch);
-                    if let Ok(file) = GitHubFile::from_json(&current_object) {
-                        files.push(file);
-                    }
-                    current_object.clear();
-                    continue;
-                }
-            }
-        }
-
-        current_object.push(ch);
+    #[test]
+    fn test_parse_url_no_path() {
+        let client = GitHubClient::new().unwrap();
+        assert!(client.parse_url("https://github.com").is_err());
     }
 
-    Ok(files)
+    #[test]
+    fn test_parse_url_rejects_http() {
+        let client = GitHubClient::new().unwrap();
+        assert!(client.parse_url("http://api.github.com/x").is_err());
+    }
+
+    #[test]
+    fn test_read_http_response_content_length() {
+        let client = GitHubClient::new().unwrap();
+        let raw = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello";
+        let body = client.read_http_response(&mut &raw[..]).unwrap();
+        assert_eq!(body, b"hello");
+    }
+
+    #[test]
+    fn test_read_http_response_chunked() {
+        let client = GitHubClient::new().unwrap();
+        let raw = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n";
+        let body = client.read_http_response(&mut &raw[..]).unwrap();
+        assert_eq!(body, b"hello world");
+    }
+
+    #[test]
+    fn test_read_http_response_error_status() {
+        let client = GitHubClient::new().unwrap();
+        let raw = b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+        assert!(client.read_http_response(&mut &raw[..]).is_err());
+    }
 }

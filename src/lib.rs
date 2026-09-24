@@ -6,6 +6,7 @@ pub mod error;
 pub mod github;
 pub mod client;
 pub mod base64;
+pub mod json;
 
 // Public API exports
 pub use error::{GcpError, GcpResult};

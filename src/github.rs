@@ -148,12 +148,16 @@ impl GitHubUrl {
     pub fn api_url(&self) -> String {
         match self.url_type {
             UrlType::File | UrlType::Folder => {
-                format!(
+                let base = format!(
                     "https://api.github.com/repos/{}/{}/contents/{}",
                     self.owner,
                     self.repo,
                     self.path.as_deref().unwrap_or("")
-                )
+                );
+                match &self.ref_ {
+                    Some(r) if !r.is_empty() => format!("{}?ref={}", base, r),
+                    _ => base,
+                }
             }
             UrlType::Repository => {
                 format!("https://api.github.com/repos/{}/{}", self.owner, self.repo)
