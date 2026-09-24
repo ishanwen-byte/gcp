@@ -101,12 +101,12 @@ base64 与 JSON 解析均为手写实现，无第三方依赖。
 
 ```bash
 cargo build --release   # 构建优化版
-cargo test              # 运行测试（23 个）
+cargo test              # 运行测试（31 个）
 cargo fmt               # 格式化
 cargo clippy            # 静态检查
 ```
 
-构建脚本：`justfile` / `Makefile` / `build.ps1`。
+构建入口：`justfile`（`just build` / `just test` / `just lint` / `just verify` / `just smoke`）。
 
 ## 许可证
 

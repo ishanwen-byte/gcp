@@ -1,160 +1,50 @@
-﻿# CLAUDE.md
+ CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
 
-GCP (GitHub Copy) is a minimal command-line tool for downloading files and folders from public GitHub repositories. The project is designed as a lightweight, no_std-compatible binary with extreme optimization for small size. It uses custom JSON parsing instead of heavy dependencies and features a custom allocator (wee_alloc) for memory efficiency.
+GCP (GitHub Copy) is a minimal command-line tool for downloading files and folders from public GitHub **and Gitea** repositories. It uses hand-written HTTP/1.1 over native-tls (no HTTP client library), hand-written JSON field extraction and base64 decoding, keeping a single runtime dependency and a ~213 KB Windows binary.
 
 ## Common Development Commands
 
-### Building and Running
 ```bash
-# Build the project
-cargo build
-
-# Build optimized release binary with extreme size optimization
-cargo build --release
-
-# Run the application
-cargo run -- <github_url> [destination]
-
-# Run tests
-cargo test
-
-# Check code without building (faster validation)
-cargo check
+cargo build --release   # optimized build
+cargo test              # 31 unit tests (inline in src)
+cargo fmt               # formatting (enforced, .rustfmt.toml: edition 2024, LF)
+cargo clippy --all-targets  # linting (must be warning-free)
 ```
 
-### Build System Commands
-```bash
-# Use Just (recommended)
-just build          # Build optimized release binary
-just upx            # Build and compress with UPX
-just size           # Show binary sizes
-just clean          # Clean build artifacts
-just test           # Run tests
-just all            # Full build pipeline (clean → build → compress → test)
+Build helpers: `just build` / `just test` (justfile), `make build` (Makefile), `./build.ps1` (Windows). UPX compression: `just build-upx` (requires `upx` on PATH).
 
-# Use Make (alternative)
-make build          # Build optimized release binary
-make upx            # Build and compress with UPX
-make size           # Show binary sizes
-make clean          # Clean build artifacts
-make test           # Run tests
-make all            # Full build pipeline
+## Architecture
 
-# Use PowerShell (Windows)
-./build.ps1         # Build optimized release binary
-./build.ps1 -Compress # Build and compress with UPX
-./build.ps1 -All    # Full build pipeline
-```
+| Module | Responsibility |
+|---|---|
+| `src/main.rs` | CLI entry: arg parsing, usage text, exit codes |
+| `src/lib.rs` | Public API `download_from_github(url, dest)`; destination normalization (default filename, trailing-separator stripping) |
+| `src/github.rs` | URL parsing for github.com / raw.githubusercontent.com / Gitea hosts; derives `api_base` (GitHub: `api.github.com`, Gitea: `<host>/api/v1`); `api_url()` with `?ref=` |
+| `src/client.rs` | `http_get`: scheme/port detection, proxy CONNECT tunnel (env `HTTPS_PROXY`/`ALL_PROXY`, TLS-only), percent-encoding of non-ASCII request targets, HTTP/1.1 response parsing (content-length, chunked); file/folder download with base64 decode |
+| `src/json.rs` | JSON field extraction with full string unescaping (`\uXXXX` incl. surrogate pairs); **byte-offset slicing** (`char_indices`) — multi-byte UTF-8 in values must never panic |
+| `src/base64.rs` | Hand-written base64 decoder |
+| `src/error.rs` | `GcpError` enum, io::Error conversion |
 
-### Development Tools
-```bash
-# Format code according to Rust standards
-cargo fmt
+## Key Behaviors (verified end-to-end)
 
-# Run Clippy linter for code quality checks
-cargo clippy
+- Folder downloads fetch per-file content via the contents API (embeds base64), falling back to `download_url` for files >1MB (API returns `content: null`)
+- Destination parent directories are created automatically
+- Plain `http://` is accepted for intranet Gitea; port parsed from host (`192.168.3.14:3000`)
+- Non-ASCII paths (CJK filenames) are percent-encoded on the wire (RFC 3986); raw UTF-8 in a request line gets 400 from GitHub
+- Proxy env vars are honored for TLS traffic only; empty-string values are ignored
 
-# Generate documentation
-cargo doc --open
+## Testing Tips
 
-# Update dependencies
-cargo update
-```
+- Intranet Gitea (`http://192.168.3.14:3000`) serves as a rate-limit-free GitHub API-compatible test bed (repo `goliath/Dtodo` has CJK filenames and a 26MB APK useful for hash verification)
+- GitHub unauthenticated limit is 60 req/h/IP; when exhausted use the Gitea instance
+- CLI exit codes: 0 success/help, 1 usage/network/parse errors
 
-## Architecture Overview
+## Conventions
 
-### Core Components
-
-**src/main.rs**: CLI entry point with minimal argument parsing
-- Handles GitHub URL validation
-- Manages command-line arguments (URL, destination)
-- Provides help text and error handling
-
-**src/lib.rs**: Public API surface
-- Exports main `download_from_github()` function
-- Integrates all modules
-
-**src/github.rs**: GitHub URL parsing and API construction
-- Parses GitHub.com and raw.githubusercontent.com URLs
-- Supports blob (file) and tree (folder) URL types
-- Generates GitHub API endpoints for content retrieval
-- Extracts filenames for automatic destination naming
-
-**src/downloader.rs**: Minimal HTTP client and file operations
-- Uses attohttpc for lightweight HTTP requests
-- Custom JSON parsing without serde dependency
-- Handles base64 content decoding from GitHub API
-- Recursive folder download with directory creation
-- Falls back to raw URLs when API content unavailable
-
-**src/error.rs**: Minimal error handling without thiserror
-- Custom error types for different failure modes
-- Implements standard error traits
-- Provides conversion from common error types (io, base64, attohttpc)
-
-### Key Design Principles
-
-1. **Minimal Dependencies**: Uses only essential crates (attohttpc, base64, wee_alloc)
-2. **Custom JSON Parsing**: Avoids serde dependency through manual string parsing
-3. **No_std Compatibility**: Designed to work in embedded environments
-4. **Extreme Size Optimization**: Configured for minimal binary size
-5. **Memory Efficiency**: Uses wee_alloc allocator for small footprint
-
-### Build Configuration
-
-The project includes extensive release optimizations in Cargo.toml:
-- Link-time optimization (LTO) enabled
-- Panic mode set to abort (no unwinding)
-- Single code generation unit
-- Symbol stripping and size optimization
-- Overflow checks and debug assertions disabled
-- Incremental compilation disabled
-
-## Project Structure
-
-- `src/main.rs` - CLI entry point and argument handling
-- `src/lib.rs` - Library interface and module organization
-- `src/github.rs` - GitHub URL parsing and API integration
-- `src/downloader.rs` - File downloading and JSON parsing
-- `src/error.rs` - Minimal error types and handling
-- `Cargo.toml` - Project configuration with extreme optimizations
-- `justfile` - Just build system commands (recommended)
-- `Makefile` - Alternative build system using make
-- `build.ps1` - PowerShell build script for Windows
-- `clippy.toml` - Clippy linting configuration
-- `.rustfmt.toml` - Rust formatting configuration
-
-## Environment Setup
-
-- Rust toolchain: nightly version 1.92.0+ required for edition 2024
-- Uses Rust edition 2024
-- Minimal external dependencies: attohttpc, base64, wee_alloc
-- Optional: UPX for further binary compression
-
-## Usage Examples
-
-```bash
-# Download single file
-gcp "https://github.com/owner/repo/blob/main/file.txt"
-
-# Download file with custom destination
-gcp "https://github.com/owner/repo/blob/main/file.txt" my_file.txt
-
-# Download folder
-gcp "https://github.com/owner/repo/tree/main/folder" ./local_folder/
-
-# Show help
-gcp --help
-```
-
-## Development Notes
-
-- The codebase avoids heavy dependencies and uses custom implementations for JSON parsing
-- Error handling is minimal but complete, supporting common failure modes
-- Binary size optimization takes priority over convenience features
-- Only supports public repositories (no authentication in minimal version)
-- Uses wee_alloc allocator to reduce memory footprint
+- Comments and commit messages in English; README in Chinese
+- Keep dependencies minimal: new deps need strong justification
+- `panic = "abort"` in release: panics are bugs (see the UTF-8 slicing incident), not control flow

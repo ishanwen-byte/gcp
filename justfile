@@ -1,58 +1,47 @@
 #!/usr/bin/env just
 set shell := ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"]
 
-# Default recipe - build with UPX compression by default
-default: build-upx
+# Default: plain optimized build (no compression - keeps binary debuggable)
+default: build
 
-# Build optimized release binary only
+# Build optimized release binary
 build:
     cargo build --release
-    echo "✓ Release build completed"
+    echo "Release build completed"
 
-# Build and compress with UPX (default behavior)
+# Build and compress with UPX
 build-upx:
-    pwsh -ExecutionPolicy Bypass -File scripts/build-upx.ps1
+    cargo build --release
+    @upx --best --lzma target/release/gcp.exe
 
-# UPX compression only (for existing binary)
+# UPX compression only (existing binary)
 upx:
-    pwsh -ExecutionPolicy Bypass -File scripts/upx-only.ps1
+    @upx --best --lzma target/release/gcp.exe
 
-# Show binary sizes with compression comparison
+# Show binary size
 size:
-    echo "=== Binary Size Analysis ==="
-    pwsh -ExecutionPolicy Bypass -File scripts/size.ps1
-
-# Detailed size comparison with backup
-size-compare:
-    echo "=== Detailed Size Comparison ==="
-    pwsh -ExecutionPolicy Bypass -File scripts/size-compare.ps1
+    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/size.ps1
 
 # Clean build artifacts
 clean:
     cargo clean
-    echo "✓ Build artifacts cleaned"
+    echo "Cleaned"
 
-# Test the application
+# Run tests
 test:
     cargo test
-    echo "✓ Tests completed"
+    echo "Tests completed"
 
-# Run help command
-help-test:
-    cargo run -- --help
+# Lint (fmt check + clippy)
+lint:
+    cargo fmt --check
+    cargo clippy --all-targets
 
-# Build and test (with compression)
-all: clean build-upx help-test size-compare
+# Full verification pipeline
+verify: clean build test lint size
 
-# Build and test without compression
-all-no-compress: clean build help-test size
-
-# Alternative simple commands for better compatibility
-build-simple:
+# Smoke test against GitHub
+smoke:
     cargo build --release
-
-clean-simple:
-    cargo clean
-
-test-simple:
-    cargo test
+    ./target/release/gcp.exe https://github.com/octocat/Hello-World/blob/master/README just_smoke.txt
+    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-check.ps1

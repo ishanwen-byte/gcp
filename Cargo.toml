@@ -4,10 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-# 使用更轻量的native TLS实现，禁用vendored特性
+# TLS backend: schannel (Windows) / Security.framework (macOS) / OpenSSL (Linux)
 native-tls = { version = "0.2", default-features = false }
-[dev-dependencies]
-tempfile = "3.8"
 
 [profile.release]
 lto = true              # 链接时优化
