@@ -1,11 +1,11 @@
 //! GitHub client with integrated HTTPS functionality
 
-use std::io::{Read, Write, BufRead, BufReader};
-use std::net::TcpStream;
+use crate::base64::Base64Decoder;
 use crate::error::{GcpError, GcpResult};
 use crate::github::{GitHubUrl, UrlType};
-use crate::base64::Base64Decoder;
 use crate::json::{GitHubFile, parse_github_file_array};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpStream;
 
 /// GitHub client with integrated HTTPS
 pub struct GitHubClient {
@@ -15,8 +15,9 @@ pub struct GitHubClient {
 impl GitHubClient {
     /// Create new GitHub client
     pub fn new() -> GcpResult<Self> {
-        let tls_connector = native_tls::TlsConnector::new()
-            .map_err(|e| GcpError::NetworkError(format!("Failed to create TLS connector: {}", e)))?;
+        let tls_connector = native_tls::TlsConnector::new().map_err(|e| {
+            GcpError::NetworkError(format!("Failed to create TLS connector: {}", e))
+        })?;
 
         Ok(Self { tls_connector })
     }
@@ -27,7 +28,7 @@ impl GitHubClient {
             UrlType::File => self.download_file(url, destination),
             UrlType::Folder => self.download_folder(url, destination),
             UrlType::Repository => Err(GcpError::UnsupportedOperation(
-                "Repository downloads not supported in minimal version".to_string()
+                "Repository downloads not supported in minimal version".to_string(),
             )),
         }
     }
@@ -67,7 +68,9 @@ impl GitHubClient {
                 std::fs::write(destination, content)?;
             }
             None => {
-                return Err(GcpError::NetworkError("No file content available".to_string()));
+                return Err(GcpError::NetworkError(
+                    "No file content available".to_string(),
+                ));
             }
         }
 
@@ -108,7 +111,7 @@ impl GitHubClient {
 
                 match std::str::from_utf8(&response)
                     .map_err(|e| GcpError::ParseError(format!("Invalid UTF-8 in response: {}", e)))
-                    .and_then(|t| GitHubFile::from_json(t))
+                    .and_then(GitHubFile::from_json)
                 {
                     Ok(info) => {
                         if let Some(content) = info.content {
@@ -117,8 +120,9 @@ impl GitHubClient {
                                     .chars()
                                     .filter(|c| *c != '\n' && *c != '\r' && *c != '\\')
                                     .collect();
-                                let decoded = Base64Decoder::decode(&clean)
-                                    .map_err(|e| GcpError::ParseError(format!("Base64 decode error: {}", e)))?;
+                                let decoded = Base64Decoder::decode(&clean).map_err(|e| {
+                                    GcpError::ParseError(format!("Base64 decode error: {}", e))
+                                })?;
                                 std::fs::write(&file_path, decoded)?;
                                 downloaded_count += 1;
                             } else {
@@ -148,7 +152,9 @@ impl GitHubClient {
                     raw_url: String::new(),
                 };
 
-                if let Err(e) = self.download_folder(&sub_url, file_path.to_str().unwrap_or(&file.name)) {
+                if let Err(e) =
+                    self.download_folder(&sub_url, file_path.to_str().unwrap_or(&file.name))
+                {
                     eprintln!("Warning: Failed to download folder {}: {}", file.name, e);
                 }
             }
@@ -161,7 +167,9 @@ impl GitHubClient {
     /// Parse URL into host and path
     fn parse_url(&self, url: &str) -> GcpResult<(String, String)> {
         if !url.starts_with("https://") {
-            return Err(GcpError::InvalidUrl("Only HTTPS URLs are supported".to_string()));
+            return Err(GcpError::InvalidUrl(
+                "Only HTTPS URLs are supported".to_string(),
+            ));
         }
 
         let remaining = &url[8..]; // Remove "https://"
@@ -185,7 +193,8 @@ impl GitHubClient {
             .map_err(|e| GcpError::NetworkError(format!("TCP connection failed: {}", e)))?;
 
         // Perform TLS handshake
-        let mut tls_stream = self.tls_connector
+        let mut tls_stream = self
+            .tls_connector
             .connect(host, tcp_stream)
             .map_err(|e| GcpError::NetworkError(format!("TLS handshake failed: {}", e)))?;
 
@@ -195,7 +204,8 @@ impl GitHubClient {
             path, host
         );
 
-        tls_stream.write_all(request.as_bytes())
+        tls_stream
+            .write_all(request.as_bytes())
             .map_err(|e| GcpError::NetworkError(format!("Failed to send request: {}", e)))?;
 
         // Read and parse HTTP response
@@ -208,7 +218,8 @@ impl GitHubClient {
 
         // Read status line
         let mut status_line = String::new();
-        reader.read_line(&mut status_line)
+        reader
+            .read_line(&mut status_line)
             .map_err(|e| GcpError::NetworkError(format!("Failed to read status: {}", e)))?;
 
         // Check status code
@@ -225,7 +236,8 @@ impl GitHubClient {
 
         loop {
             let mut line = String::new();
-            reader.read_line(&mut line)
+            reader
+                .read_line(&mut line)
                 .map_err(|e| GcpError::NetworkError(format!("Failed to read header: {}", e)))?;
 
             if line.trim().is_empty() {
@@ -240,7 +252,9 @@ impl GitHubClient {
                 }
             }
 
-            if line.to_lowercase().starts_with("transfer-encoding:") && line.to_lowercase().contains("chunked") {
+            if line.to_lowercase().starts_with("transfer-encoding:")
+                && line.to_lowercase().contains("chunked")
+            {
                 chunked = true;
             }
         }
@@ -248,14 +262,16 @@ impl GitHubClient {
         // Read body based on transfer encoding
         if let Some(length) = content_length {
             let mut body = vec![0u8; length];
-            reader.read_exact(&mut body)
+            reader
+                .read_exact(&mut body)
                 .map_err(|e| GcpError::NetworkError(format!("Failed to read body: {}", e)))?;
             Ok(body)
         } else if chunked {
             self.read_chunked_body(&mut reader)
         } else {
             let mut body = Vec::new();
-            reader.read_to_end(&mut body)
+            reader
+                .read_to_end(&mut body)
                 .map_err(|e| GcpError::NetworkError(format!("Failed to read body: {}", e)))?;
             Ok(body)
         }
@@ -267,7 +283,8 @@ impl GitHubClient {
 
         loop {
             let mut chunk_size_line = String::new();
-            reader.read_line(&mut chunk_size_line)
+            reader
+                .read_line(&mut chunk_size_line)
                 .map_err(|e| GcpError::NetworkError(format!("Failed to read chunk size: {}", e)))?;
 
             let chunk_size = usize::from_str_radix(chunk_size_line.trim(), 16)
@@ -278,19 +295,22 @@ impl GitHubClient {
             }
 
             let mut chunk = vec![0u8; chunk_size];
-            reader.read_exact(&mut chunk)
+            reader
+                .read_exact(&mut chunk)
                 .map_err(|e| GcpError::NetworkError(format!("Failed to read chunk: {}", e)))?;
             body.extend_from_slice(&chunk);
 
             let mut crlf = [0u8; 2];
-            reader.read_exact(&mut crlf)
+            reader
+                .read_exact(&mut crlf)
                 .map_err(|e| GcpError::NetworkError(format!("Failed to read CRLF: {}", e)))?;
         }
 
         // Skip trailer headers
         loop {
             let mut line = String::new();
-            reader.read_line(&mut line)
+            reader
+                .read_line(&mut line)
                 .map_err(|e| GcpError::NetworkError(format!("Failed to read trailer: {}", e)))?;
 
             if line.trim().is_empty() {
@@ -309,7 +329,9 @@ mod tests {
     #[test]
     fn test_parse_url() {
         let client = GitHubClient::new().unwrap();
-        let (host, path) = client.parse_url("https://api.github.com/repos/a/b/contents/c?ref=main").unwrap();
+        let (host, path) = client
+            .parse_url("https://api.github.com/repos/a/b/contents/c?ref=main")
+            .unwrap();
         assert_eq!(host, "api.github.com");
         assert_eq!(path, "/repos/a/b/contents/c?ref=main");
     }

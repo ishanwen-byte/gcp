@@ -4,37 +4,37 @@
 /// Extract a required JSON string field
 pub fn extract_json_field(json_str: &str, field: &str) -> String {
     let pattern = format!("\"{}\":", field);
-    
+
     // Find the field position
     let mut start = match json_str.find(&pattern) {
         Some(pos) => pos + pattern.len(),
         None => return String::new(),
     };
-    
+
     // Skip whitespace after the colon
     let after_field = json_str[start..].trim_start();
     start = json_str.len() - after_field.len();
-    
+
     // Check if it's null
     if after_field.starts_with("null") {
         return String::new();
     }
-    
+
     // Extract quoted string value
     if let Some(quote_start) = after_field.find('"') {
         let value_start = start + quote_start + 1;
         let remaining = &json_str[value_start..];
-        
+
         // Find the closing quote, handling escaped quotes
         let mut escaped = false;
         let mut quote_end = None;
-        
+
         for (i, c) in remaining.chars().enumerate() {
             if escaped {
                 escaped = false;
                 continue;
             }
-            
+
             match c {
                 '\\' => escaped = true,
                 '"' => {
@@ -44,12 +44,12 @@ pub fn extract_json_field(json_str: &str, field: &str) -> String {
                 _ => {}
             }
         }
-        
+
         if let Some(end) = quote_end {
             return unescape_json_string(&remaining[..end]);
         }
     }
-    
+
     String::new()
 }
 
@@ -101,9 +101,7 @@ fn unescape_json_string(raw: &str) -> String {
                     if (0xD800..0xDC00).contains(&code) {
                         // High surrogate: try to read the low surrogate
                         let mut lookahead = chars.clone();
-                        if let (Some('\\'), Some('u')) =
-                            (lookahead.next(), lookahead.next())
-                        {
+                        if let (Some('\\'), Some('u')) = (lookahead.next(), lookahead.next()) {
                             let mut low = 0u32;
                             let mut low_valid = true;
                             for _ in 0..4 {
@@ -123,9 +121,7 @@ fn unescape_json_string(raw: &str) -> String {
                             }
                             if low_valid && (0xDC00..0xE000).contains(&low) {
                                 chars = lookahead;
-                                let combined = 0x10000
-                                    + ((code - 0xD800) << 10)
-                                    + (low - 0xDC00);
+                                let combined = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
                                 if let Some(ch) = char::from_u32(combined) {
                                     out.push(ch);
                                     continue;
@@ -184,22 +180,20 @@ impl GitHubFile {
         let name = extract_json_field(json_str, "name");
         let path = extract_json_field(json_str, "path");
         let file_type = extract_json_field(json_str, "type");
-        
+
         if name.is_empty() {
             return Err(crate::error::GcpError::ParseError(
-                "Invalid JSON format: missing or empty 'name' field".to_string()
+                "Invalid JSON format: missing or empty 'name' field".to_string(),
             ));
         }
-        
-        let download_url = extract_optional_json_field(json_str, "download_url")
-            .filter(|url| !url.is_empty());
-        
-        let content = extract_optional_json_field(json_str, "content")
-            .filter(|c| !c.is_empty());
-        
-        let encoding = extract_optional_json_field(json_str, "encoding")
-            .filter(|e| !e.is_empty());
-        
+
+        let download_url =
+            extract_optional_json_field(json_str, "download_url").filter(|url| !url.is_empty());
+
+        let content = extract_optional_json_field(json_str, "content").filter(|c| !c.is_empty());
+
+        let encoding = extract_optional_json_field(json_str, "encoding").filter(|e| !e.is_empty());
+
         Ok(GitHubFile {
             name,
             path,
@@ -214,22 +208,22 @@ impl GitHubFile {
 /// Parse JSON array of GitHub files
 pub fn parse_github_file_array(json_str: &str) -> Result<Vec<GitHubFile>, crate::error::GcpError> {
     let json_str = json_str.trim();
-    
+
     if !json_str.starts_with('[') {
         return Err(crate::error::GcpError::ParseError(
-            "Expected JSON array".to_string()
+            "Expected JSON array".to_string(),
         ));
     }
-    
+
     let array_content = &json_str[1..json_str.len().saturating_sub(1)];
     let mut files = Vec::new();
-    
+
     // Parse individual JSON objects in the array
     let mut current_object = String::new();
     let mut brace_count = 0;
     let mut in_string = false;
     let mut escaped = false;
-    
+
     for ch in array_content.chars() {
         if in_string {
             if escaped {
@@ -237,7 +231,7 @@ pub fn parse_github_file_array(json_str: &str) -> Result<Vec<GitHubFile>, crate:
                 current_object.push(ch);
                 continue;
             }
-            
+
             match ch {
                 '\\' => {
                     escaped = true;
@@ -267,7 +261,7 @@ pub fn parse_github_file_array(json_str: &str) -> Result<Vec<GitHubFile>, crate:
                 '}' => {
                     brace_count -= 1;
                     current_object.push(ch);
-                    
+
                     if brace_count == 0 {
                         if let Ok(file) = GitHubFile::from_json(&current_object) {
                             files.push(file);
@@ -291,7 +285,7 @@ pub fn parse_github_file_array(json_str: &str) -> Result<Vec<GitHubFile>, crate:
             }
         }
     }
-    
+
     Ok(files)
 }
 
@@ -352,12 +346,15 @@ mod tests {
             "content": "SGVsbG8=",
             "encoding": "base64"
         }"#;
-        
+
         let file = GitHubFile::from_json(json).unwrap();
         assert_eq!(file.name, "test.txt");
         assert_eq!(file.path, "src/test.txt");
         assert_eq!(file.file_type, "file");
-        assert_eq!(file.download_url, Some("https://example.com/test.txt".to_string()));
+        assert_eq!(
+            file.download_url,
+            Some("https://example.com/test.txt".to_string())
+        );
         assert_eq!(file.content, Some("SGVsbG8=".to_string()));
         assert_eq!(file.encoding, Some("base64".to_string()));
     }
@@ -368,7 +365,7 @@ mod tests {
             {"name": "file1.txt", "path": "file1.txt", "type": "file"},
             {"name": "file2.txt", "path": "file2.txt", "type": "file"}
         ]"#;
-        
+
         let files = parse_github_file_array(json).unwrap();
         assert_eq!(files.len(), 2);
         assert_eq!(files[0].name, "file1.txt");

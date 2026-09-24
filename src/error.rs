@@ -30,8 +30,6 @@ pub type GcpResult<T> = Result<T, GcpError>;
 // Implement standard error traits
 impl std::error::Error for GcpError {}
 
-
-
 // Conversion from std::io errors
 impl From<std::io::Error> for GcpError {
     fn from(err: std::io::Error) -> Self {

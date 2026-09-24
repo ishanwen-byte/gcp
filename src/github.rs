@@ -23,7 +23,9 @@ impl GitHubUrl {
     pub fn parse(url_str: &str) -> GcpResult<Self> {
         // Basic URL validation
         if !url_str.starts_with("https://") {
-            return Err(GcpError::InvalidUrl("Only HTTPS URLs are supported".to_string()));
+            return Err(GcpError::InvalidUrl(
+                "Only HTTPS URLs are supported".to_string(),
+            ));
         }
 
         // Extract host
@@ -38,7 +40,9 @@ impl GitHubUrl {
         match host {
             "github.com" => Self::parse_github_url(path),
             "raw.githubusercontent.com" => Self::parse_raw_url(path, url_str),
-            _ => Err(GcpError::InvalidUrl("Only GitHub URLs are supported".to_string())),
+            _ => Err(GcpError::InvalidUrl(
+                "Only GitHub URLs are supported".to_string(),
+            )),
         }
     }
 
@@ -46,7 +50,9 @@ impl GitHubUrl {
         let segments: Vec<&str> = path.split('/').collect();
 
         if segments.len() < 2 {
-            return Err(GcpError::InvalidUrl("Invalid GitHub URL format".to_string()));
+            return Err(GcpError::InvalidUrl(
+                "Invalid GitHub URL format".to_string(),
+            ));
         }
 
         let owner = segments[0].to_string();
@@ -70,12 +76,17 @@ impl GitHubUrl {
             let raw_url = if let Some(ref path) = path {
                 format!(
                     "https://raw.githubusercontent.com/{}/{}/{}/{}",
-                    owner, repo, ref_.as_deref().unwrap_or("main"), path
+                    owner,
+                    repo,
+                    ref_.as_deref().unwrap_or("main"),
+                    path
                 )
             } else {
                 format!(
                     "https://raw.githubusercontent.com/{}/{}/{}",
-                    owner, repo, ref_.as_deref().unwrap_or("main")
+                    owner,
+                    repo,
+                    ref_.as_deref().unwrap_or("main")
                 )
             };
 
@@ -104,7 +115,9 @@ impl GitHubUrl {
         let segments: Vec<&str> = path.split('/').collect();
 
         if segments.len() < 3 {
-            return Err(GcpError::InvalidUrl("Invalid raw GitHub URL format".to_string()));
+            return Err(GcpError::InvalidUrl(
+                "Invalid raw GitHub URL format".to_string(),
+            ));
         }
 
         let owner = segments[0].to_string();
@@ -116,7 +129,11 @@ impl GitHubUrl {
             None
         };
 
-        let url_type = if path.is_some() { UrlType::File } else { UrlType::Repository };
+        let url_type = if path.is_some() {
+            UrlType::File
+        } else {
+            UrlType::Repository
+        };
 
         Ok(GitHubUrl {
             owner,
@@ -130,17 +147,12 @@ impl GitHubUrl {
 
     /// Extract filename from path for file URLs
     pub fn filename(&self) -> Option<String> {
+        let last_segment = |path: &Option<String>| {
+            path.as_ref()
+                .and_then(|p| p.rsplit('/').next().map(|s| s.to_string()))
+        };
         match self.url_type {
-            UrlType::File => {
-                self.path.as_ref().and_then(|path| {
-                    path.split('/').last().map(|filename| filename.to_string())
-                })
-            }
-            UrlType::Folder => {
-                self.path.as_ref().and_then(|path| {
-                    path.split('/').last().map(|foldername| foldername.to_string())
-                })
-            }
+            UrlType::File | UrlType::Folder => last_segment(&self.path),
             UrlType::Repository => None,
         }
     }

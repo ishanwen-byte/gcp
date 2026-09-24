@@ -1,9 +1,9 @@
 //! Minimal GitHub Copier - lightweight version
 //! Usage: gcp <github_url> [destination]
 
+use gcp::download_from_github;
 use std::env;
 use std::process;
-use gcp::download_from_github;
 
 fn print_usage() {
     eprintln!(
@@ -64,8 +64,9 @@ fn main() {
     let destination = args.get(2).map(|s| s.as_str()).unwrap_or(".");
 
     // Validate URL format
-    if !github_url.starts_with("https://github.com/") &&
-       !github_url.starts_with("https://raw.githubusercontent.com/") {
+    if !github_url.starts_with("https://github.com/")
+        && !github_url.starts_with("https://raw.githubusercontent.com/")
+    {
         eprintln!("Error: Only GitHub URLs are supported");
         print_usage();
         process::exit(1);
