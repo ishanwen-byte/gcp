@@ -266,8 +266,10 @@ impl GitHubClient {
         // request target is a protocol violation and gets a 400 from GitHub.
         let encoded_path = Self::percent_encode_path(path);
         let request = format!(
-            "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: gcp/0.1.0\r\nConnection: close\r\nAccept: */*\r\n\r\n",
-            encoded_path, host
+            "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: gcp/{}\r\nConnection: close\r\nAccept: */*\r\n\r\n",
+            encoded_path,
+            host,
+            env!("CARGO_PKG_VERSION")
         );
 
         if is_tls {

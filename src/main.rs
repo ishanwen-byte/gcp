@@ -29,7 +29,8 @@ fn print_usage() {
     eprintln!("Usage: gcp [OPTIONS] <github_url> [destination]");
     eprintln!();
     eprintln!("OPTIONS:");
-    eprintln!("  -h, --help     Print help information");
+    eprintln!("  -h, --help        Print help information");
+    eprintln!("  -V, --version     Print version information");
     eprintln!();
     eprintln!("ARGUMENTS:");
     eprintln!("  <github_url>    GitHub URL to download from");
@@ -52,6 +53,12 @@ fn main() {
     // Handle help flag
     if args.len() == 2 && (args[1] == "--help" || args[1] == "-h") {
         print_usage();
+        process::exit(0);
+    }
+
+    // Handle version flag
+    if args.len() == 2 && (args[1] == "--version" || args[1] == "-V") {
+        println!("gcp {}", env!("CARGO_PKG_VERSION"));
         process::exit(0);
     }
 
